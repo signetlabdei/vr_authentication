@@ -428,7 +428,7 @@ class GameAuthenticator:
 
                                 # We need to keep the genuine and impostor data separated as we are voting on increasing windows and the label of data has to stay constant
                                 
-                                group = genuine_test.iloc[offset:offset+n_samples]
+                                group = genuine_test.iloc[offset:offset+1]
                                 group_features = group.drop(columns=['is_genuine', 'original_id', 'time'])
                                 
                                 genuine_probs = 0

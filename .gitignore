@@ -1,1 +1,7 @@
 data/
+models/
+results/
+id_models/
+id_results/
+.*
+*.pkl

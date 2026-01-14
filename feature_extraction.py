@@ -36,6 +36,8 @@ for stat in stats:
     feature_list += [feature + '_' + stat for feature in movement_feature_list]
     feature_list += [feature + '_' + stat for feature in traffic_feature_list]
 
+empty = True
+
 for group in [1,2]:
     for user in range(15):
         for order in [1,2]:
@@ -67,9 +69,9 @@ for group in [1,2]:
                 mf['Acc_' + val] = mf[val].diff(periods=2)
 
             # Calculate distances and angles
-            head_pos = mf[['HeadPosX', 'HeadPosY']].values
-            left_touch_pos = mf[['LeftTouchPosX', 'LeftTouchPosY']].values
-            right_touch_pos = mf[['RightTouchPosX', 'RightTouchPosY']].values
+            head_pos = mf[['HeadPosX', 'HeadPosZ']].values
+            left_touch_pos = mf[['LeftTouchPosX', 'LeftTouchPosZ']].values
+            right_touch_pos = mf[['RightTouchPosX', 'RightTouchPosZ']].values
             mf['Dist_LeftHead'] = np.linalg.norm(left_touch_pos - head_pos, axis=1)
             mf['Dist_RightHead'] = np.linalg.norm(right_touch_pos - head_pos, axis=1)
             mf['Dist_LeftRight'] = np.linalg.norm(left_touch_pos - right_touch_pos, axis=1)
@@ -120,4 +122,13 @@ for group in [1,2]:
                 features['ID'].append(id_number)
 
             feature_frame = pd.DataFrame.from_dict(features)
+
+            if (empty):
+                full_frame = feature_frame.copy()
+                empty = False
+            else:
+                full_frame = pd.concat([full_frame, feature_frame])
+
             feature_frame.to_csv(OUTPUT_FILEPATH + userid + '/' + GAME_TYPE + '_features.csv')
+
+full_frame.to_csv(OUTPUT_FILEPATH + GAME_TYPE + '_features.csv')
