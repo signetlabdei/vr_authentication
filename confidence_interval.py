@@ -3,7 +3,12 @@ from scipy.stats import binomtest
 import pandas as pd
 
 
-users = 30
+AUTH = False
+
+if (AUTH):
+    users = 2
+else:
+    users = 30
 samples = 24
 confidence = 0.95
 method = 'wilson' # Wilson or exact (Clopper-Pearson) or wilsoncc (with continuity correction)
