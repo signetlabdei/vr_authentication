@@ -36,6 +36,8 @@ TRAIN_VOTING = True
 NORM_HEIGHT = True
 # Traffic inclusion flag
 TRAFFIC = True
+# Movement inclusion flag
+MOV = True
 
 ############## Game Identification Class ##############
 
@@ -76,16 +78,16 @@ class GameIdentification:
             'RF': RandomForestClassifier(n_estimators=100, random_state=SEED),
             'LR': LogisticRegression(random_state=SEED, max_iter=1000),
             'XGB': XGBClassifier(random_state=SEED),
-            'LGBM': LGBMClassifier(random_state=SEED, verbose=-1)
+            'LGBM': LGBMClassifier(random_state=SEED, verbose=-1),
         }
 
         # Add the VotingClassifier
         voting_classifiers = [
             ('ET', self.models.get('ET')),  # ExtraTreesClassifier
             ('RF', self.models.get('RF')),  # RandomForestClassifier
-            ('LR', self.models.get('LR')),  # LogisticRegression
-            ('XGB', self.models.get('XGB')),  # XGBoost 
+            ('XGB', self.models.get('XGB')),  # XGBoost
             ('LGBM', self.models.get('LGBM')),  # LGBMClassifier
+            ('LR', self.models.get('LR')),  # LogisticRegression
             ] 
         
         
@@ -246,7 +248,7 @@ class GameIdentification:
                     user_copy = user_data.copy()
                     user_features = user_copy.drop(columns=['ID', 'time'])
                     preds = self.identify_user(user_features, model = loaded_model)
-                    for offset in range(0, samples + 1 - n_samples, n_samples): # 24 so that when n sample is 1 range is between 0 and 24 (i.e., 0-23), and when n samples is 23 range is between 0 and 2
+                    for offset in range(0, samples + 1 - n_samples, 1): # 24 so that when n sample is 1 range is between 0 and 24 (i.e., 0-23), and when n samples is 23 range is between 0 and 2
                         group = preds[offset: offset + n_samples]
                         id_dist = np.zeros(30)
                         for i in range(n_samples):
@@ -307,7 +309,7 @@ def save_object(obj, filename):
     with open(filename, 'wb') as outp:  # Overwrites any existing file.
         pickle.dump(obj, outp, pickle.HIGHEST_PROTOCOL)
 
-def prepare_id_data(forklift_simulator, beat_saber, include_traffic=False):
+def prepare_id_data(forklift_simulator, beat_saber, include_traffic=False, include_mov=True):
     """Prepare data for authentication systems."""
     
     data_forklift_simulator = forklift_simulator.copy()
@@ -325,6 +327,19 @@ def prepare_id_data(forklift_simulator, beat_saber, include_traffic=False):
 
         data_forklift_simulator = data_forklift_simulator.drop(columns=cols_to_drop)
         data_beat_saber = data_beat_saber.drop(columns=cols_to_drop)
+
+    if not include_mov:
+        data_copy = data_forklift_simulator.copy()
+        cols = list(data_copy.columns)
+        to_keep = []
+        for col in cols:
+            if 'Traffic' in col:
+                to_keep.append(col)
+        to_keep.append('ID')
+        to_keep.append('time')
+        data_forklift_simulator = data_copy[to_keep]
+        data_copy = data_beat_saber.copy()
+        data_beat_saber = data_copy[to_keep]
 
     data_forklift_simulator['ID'] -= 30
 
@@ -350,16 +365,18 @@ def main():
     #traffic_forklift_simulator =traffic_forklift_simulator[traffic_forklift_simulator["ID"].isin(range(30,60))]
     #traffic_beat_saber = traffic_beat_saber[traffic_beat_saber["ID"].isin(range(0,30))]
 
+    if MOV:
+        filename = 'MOV_'
+    else:
+        filename = ''
 
     if TRAFFIC:
-        filename = 'MOV_TRAFFIC'
-    else:
-        filename = 'MOV'
+        filename += 'TRAFFIC'
 
     if NORM_HEIGHT:
         filename += '_NO_HEIGHT'
-        output_filename = 'id_mov_traffic_without_height.pkl'
-        voting_results = 'id_voting_results_mov_traffic_without_height_confidence.pkl'
+        output_filename = filename + '.pkl'
+        voting_results = 'id_voting_results_' + filename + '_confidence.pkl'
         for col in forklift_simulator.columns.values:
             if "PosY" in col and "Acc" not in col and "Vel" not in col:
                 for id in range(30):
@@ -376,7 +393,8 @@ def main():
     identification_data = prepare_id_data(
         forklift_simulator,
         beat_saber,
-        include_traffic=TRAFFIC,
+        include_traffic = TRAFFIC,
+        include_mov = MOV
     )
 
     if TRAIN:
