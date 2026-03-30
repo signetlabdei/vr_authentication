@@ -21,19 +21,22 @@ from sklearn.metrics import confusion_matrix
 from imblearn.over_sampling import SMOTE
 
 SEED = 42
-RESULTS_DIR = os.path.join('..\\results', 'authentication', 'user_evaluation')
-MODELS_DIR = os.path.join('..\\models', 'authentication', 'user_evaluation')
+RESULTS_DIR = os.path.join('C:\\Users\\root\\Desktop\\results', 'authentication', 'user_evaluation')
+MODELS_DIR = os.path.join('G:\\Il mio Drive\\Esperimenti Oculus\\VR authentication\\vr-user-identification-authentication-main\\vr-user-identification-authentication-main\\models', 'authentication', 'user_evaluation')
 
 # Training flags
 TRAIN = False
-TRAIN_VOTING = False
+TRAIN_VOTING = True
 
 # Heigth normalization flag
-NORM_HEIGHT = False
+NORM_HEIGHT = True
 
 # Shap flag
-SHAP = False
-
+SHAP = False # perform shap - note: if this is true but all other shap flags are false, pre-computed all users shap values are used
+SHAP_ALL = False # Perform shap for all users, computing the shap values
+SHAP_USER_BEAT = False # Perform shap for specific user, computing the shap values
+SHAP_USER_FORKLIFT = False # Perform shap for specific user, computing the shap values
+USER = 22 # user ID from 0 to 59 - note: beat saber users go from 0 to 29, forklift users go from 30 to 59
 
 ############## Game Authenticator Class ##############
 
@@ -139,7 +142,6 @@ class GameAuthenticator:
             id = np.random.choice(range(len(train_impostor)),train_sample,replace=False) 
             train_ids.append(id)
             train_impostors_sampled.append(train_impostor.iloc[id])
-            #train_impostors.append(train_impostor)
 
         test_only_impostors = []
         test_only_impostors_sampled = []
@@ -195,7 +197,7 @@ class GameAuthenticator:
             all_intruder_ids = np.array([id for id in user_ids if id != user_id])
             
             
-            np.random.shuffle(all_intruder_ids) # non sono comunque sempre gli stessi al cambiare di user_id perché cambia l'elenco degli intruder quindi tanto vale non escludere sempre l'ultimo
+            np.random.shuffle(all_intruder_ids) 
             groups = [all_intruder_ids[i:i+test_intruders_count] for i in range(0, len(all_intruder_ids), test_intruders_count)][:-1] 
             
             test_only_intruders = np.array([groups[i] for i in range(len(groups))])
@@ -283,7 +285,6 @@ class GameAuthenticator:
                     dataset_metrics.append(dataset_info)
                     
                     for model_name, model in models.items():
-                        #print(model_name)
                                                     
                         model.fit(X_train, y_train)
                         
@@ -294,7 +295,6 @@ class GameAuthenticator:
                         joblib.dump(model, model_path)
                                                 
                         y_pred = model.predict(X_test)
-                        #y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
                         
                         accuracy = accuracy_score(y_test, y_pred)
                         precision = precision_score(y_test, y_pred, zero_division=0)
@@ -334,7 +334,7 @@ class GameAuthenticator:
         
         dataset_metrics_df = pd.DataFrame(dataset_metrics)
         dataset_metrics_path = os.path.join(RESULTS_DIR, f'dataset_metrics_{game_type}_{filename}.csv')
-        dataset_metrics_df.to_csv(dataset_metrics_path, index=False) # - problem to solve: path too long windows
+        dataset_metrics_df.to_csv(dataset_metrics_path, index=False) 
 
         model_metrics_path = os.path.join(RESULTS_DIR, f'model_metrics_{filename}.csv')
         self.performance_metrics.to_csv(model_metrics_path, index=False)
@@ -345,13 +345,11 @@ class GameAuthenticator:
     
     def authenticate_user(self, gameplay_data, model=None):
         """Authenticate a user based on gameplay data."""
-        
-        gameplay_data = gameplay_data.to_frame().T
 
-        res = model.predict_proba(gameplay_data)[0]
+        res = model.predict_proba(gameplay_data) 
 
-        is_genuine = bool(np.argmax(res))
-        confidence = res[1] # Class 0 = not genuine, class 1 = genuine
+        is_genuine = [bool(np.argmax(sample)) for sample in res]
+        confidence = res[:,1] # Class 0 = not genuine, class 1 = genuine
         
         return is_genuine, confidence   
     
@@ -409,57 +407,42 @@ class GameAuthenticator:
                         actual_sample_sizes = range(1, int(np.floor(len(genuine_test) / 3))) # so that we have 3 windows to average
 
                         overall_acc = {}
+                        overall_fp = {}
+                        overall_fn = {}
+
                         for n_samples in actual_sample_sizes:
                             
                             
                             acc_per_window = []
+                            fp_per_window = []
+                            fn_per_window = []
 
+                            
+                            genuine_features = genuine_test.drop(columns=['is_genuine', 'original_id', 'time'])
+                            _, genuine_p_genuine = self.authenticate_user(genuine_features, model = loaded_model)
+                            
+                            impostor_features = impostor_test.drop(columns=['is_genuine', 'original_id', 'time'])
+                            _, genuine_p_impostor = self.authenticate_user(impostor_features, model = loaded_model)
+                            
                             for offset in range(0, len(genuine_test) + 1 - n_samples, n_samples): # 24 so that when n sample is 1 range is between 0 and 24 (i.e., 0-23), and when n samples is 23 range is between 0 and 2 (i.e., 0-1)
                                 tp = 0
                                 fn = 0
                                 fp = 0
                                 tn = 0
 
-                                # group = test_data.iloc[offset:offset+n_samples]
-                                # group_features = group.drop(columns=['is_genuine', 'original_id', 'time']).reset_index(drop=True)
-                                # labels = test_data['is_genuine'].values
-                                # genuine_probs = 0
-                                # impostor_probs = 0
-
-                                # for id, sample in group_features.iterrows():
-                                #     _, genuine_p = self.authenticate_user(sample, model = loaded_model)
-                                #     if labels[id] == 1:
-                                #         genuine_probs += genuine_p
-                                #     else:
-                                #         impostor_probs += genuine_p
-
                                 # We need to keep the genuine and impostor data separated as we are voting on increasing windows and the label of data has to stay constant
                                 
-                                group = genuine_test.iloc[offset:offset+n_samples]
-                                group_features = group.drop(columns=['is_genuine', 'original_id', 'time'])
+                                group_genuine = genuine_p_genuine[offset:offset+n_samples]
                                 
-                                genuine_probs = 0
-                                _, genuine_p = self.authenticate_user(group_features, model = loaded_model)
-                                genuine_probs = np.sum(genuine_p)
+                                genuine_probs = np.sum(group_genuine)
 
-                                # for _, sample in group_features.iterrows():
-                                #     _, genuine_p = self.authenticate_user(sample, model = loaded_model)
-                                #     genuine_probs += genuine_p
-                                
-                                genuine_percentage = genuine_probs / (len(group_features))
+                                genuine_percentage = genuine_probs / (len(group_genuine))
 
-                                group = impostor_test.iloc[offset:offset+n_samples]
-                                group_features = group.drop(columns=['is_genuine', 'original_id', 'time'])
+                                group_impostor = genuine_p_impostor[offset:offset+n_samples]
+                               
+                                impostor_probs = np.sum(group_impostor)
                                 
-                                impostor_probs = 0
-                                _, genuine_p = self.authenticate_user(group_features, model = loaded_model)
-                                impostor_probs = np.sum(genuine_p)
-
-                                # for _, sample in group_features.iterrows():
-                                #     _, genuine_p = self.authenticate_user(sample, model = loaded_model)
-                                #     impostor_probs += genuine_p
-                                
-                                impostor_percentage = impostor_probs / (len(group_features)) 
+                                impostor_percentage = impostor_probs / (len(group_impostor)) 
                                 if genuine_percentage >= voting_threshold:
                                     tp += 1
                                 else:
@@ -470,9 +453,13 @@ class GameAuthenticator:
                                     tn += 1
 
                                 acc_per_window.append((tp+tn)/(tp+tn+fp+fn))
+                                fp_per_window.append(fp)
+                                fn_per_window.append(fn)
                         
                             
-                            overall_acc=np.mean(acc_per_window)
+                            overall_acc=np.mean(acc_per_window) # average over the windows of the same size
+                            overall_fp=np.mean(fp_per_window)
+                            overall_fn=np.mean(fn_per_window)
 
                             result = {
                                 'User_ID': user_id,
@@ -482,6 +469,8 @@ class GameAuthenticator:
                                 'Model_Type': model_name,
                                 'Window_size': n_samples,
                                 'Accuracy': overall_acc,
+                                'False_positives': overall_fp,
+                                'False_negatives': overall_fn,
                             }
                         
                             user_results_by_game[game_type][user_id].append(result)
@@ -582,12 +571,55 @@ class GameAuthenticator:
                         
                         subset_values.append(np.mean(np.abs(shap_values[0]), axis=0)) # mean along the samples, note: this iterates over all the users in a subset
                         
-                game_values[game_type][t] = np.mean(np.array(subset_values), axis = 0) # mean along the subsets
+                game_values[game_type][t] = np.mean(np.array(subset_values), axis = 0) # mean along the subsets and the users
             
         columns = test_data.columns
 
         return game_values, columns
     
+    def perform_shap_user(self, model_name = 'ET', filename='initial', user = 0, game = 'beat_saber'):
+        
+        game_values = {}
+        game_type = game
+        game_values[game_type] = {}
+        print(f'Game: {game_type}')
+        if game_type == 'forklift_simulator':
+            
+            game_test_sets_all = self.forklift_test_sets
+        else:
+            
+            game_test_sets_all = self.beat_saber_test_sets
+        
+        
+        for t in range(2):
+            
+            print(f'Test: {t}')
+            
+            game_test_sets_t = game_test_sets_all[f'test_{t}']
+            subset_values = []
+            for i in range(len(game_test_sets_t)):
+                print(f'Subset: {i}')
+                game_test_sets = game_test_sets_t[f'subset_{i}']
+
+                user_id = user
+                model_path = os.path.join(MODELS_DIR, game_type, f'user_{user_id}', f'{model_name}_{filename}_test_{t}_subset_{i}.joblib')
+                
+                test = game_test_sets[user_id]
+                test_data = test.drop(columns=['is_genuine', 'original_id', 'time'])
+                
+                loaded_model = joblib.load(model_path)
+
+                explainer = shap.TreeExplainer(loaded_model)
+                shap_values = explainer.shap_values(test_data) # is a list of two elements (opposites, one per class), every element is n_sample(48)xn_features(501)
+                
+                subset_values.append(np.mean(np.abs(shap_values[0]), axis=0)) # mean along the samples
+                    
+            game_values[game_type][t] = np.mean(np.array(subset_values), axis = 0) # mean along the subsets
+            
+        columns = test_data.columns
+
+        return game_values, columns
+
 ############## Functions ##############
 def save_object(obj, filename):
     with open(filename, 'wb') as outp:  # Overwrites any existing file.
@@ -680,7 +712,7 @@ def main():
         filename = 'MOV_TRAFFIC_NO_HEIGHT'
         shap_filename = 'shap_without_heigth.pkl'
         output_filename = 'auth_mov_traffic_without_height.pkl'
-        voting_results = 'voting_results_mov_traffic_without_height_confidence.pkl'
+        voting_results = 'voting_results_mov_traffic_without_height_confidence_complete.pkl'
         for col in forklift_simulator.columns.values:
             if "PosY" in col and "Acc" not in col and "Vel" not in col:
                 for id in range(30):
@@ -691,7 +723,7 @@ def main():
         filename = 'MOV_TRAFFIC'
         shap_filename = 'shap.pkl'
         output_filename = 'auth_mov_traffic.pkl'
-        voting_results = 'voting_results_mov_traffic_confidence.pkl'
+        voting_results = 'voting_results_mov_traffic_confidence_complete.pkl'
 
     
 
@@ -731,81 +763,74 @@ def main():
         with open(output_filename, 'rb') as file:
             authenticator = pickle.load(file)
 
-    if SHAP:
-        game_values, columns = authenticator.perform_shap(model_name='ET', filename=filename)
-        shap_dict = {}
-        shap_dict['values'] = game_values
-        shap_dict['columns'] = columns
-        
-        for game_type in ['beat_saber', 'forklift_simulator']:
-            for t in range(2):
-                values = game_values[game_type][t]
-                idx_sort = values.argsort()
-                columns_sorted = columns[idx_sort[::-1]]
-                values_sorted = values[idx_sort[::-1]]
-                feature_names = [a + ": " + str(b) for a,b in zip(columns_sorted, values_sorted)]
-                print(f'Game: {game_type} - test: {t}')
-                print(feature_names[:30])
-                save_object(shap_dict, shap_filename)
-    else:
-        with open(shap_filename, 'rb') as file:
-            shap_dict = pickle.load(file)
-
-    feats = []
-    columns = list(shap_dict['columns'])
-    game_values = shap_dict['values']
-
-
-    for col in columns:
-        feat = '_'.join(col.split('_')[:-1])
-        feats.append(feat)
-
-    unique_feats = list(set(feats))
-    # for plotting
-    #selected_cols =['Traffic_DL', 'Pos_HeadPosY', 'Pos_HeadOrientationW', 'Traffic_DL_Packet_Size', 'Pos_HeadPosZ', 'Pos_HeadOrientationX', 'Traffic_DL_Frame_Size', 'Pos_HeadOrientationY', 'Pos_HeadPosX', 'Pos_RightTouchPosZ', 'Pos_RightTouchOrientationW', 'Pos_LeftTouchPosX', 'Pos_RightTouchPosX', 'Pos_LeftTouchPosZ', 'Pos_LeftTouchOrientationY']   
-    for game_type in ['beat_saber', 'forklift_simulator']:
-            for t in range(2):
-                values = game_values[game_type][t]
-                
-                summed_values = [] #list of shap values comulated per feature type, following the order in unique_feats
-                for feat in unique_feats:
-                    ids = []
-                    for id in range(len(columns)):
-                        if feat in columns[id]:
-                            ids.append(id)
-                    summed_values.append(np.sum(values[ids]))
-                    
-                idx_sort = np.array(summed_values).argsort()
-                columns_sorted = np.array(unique_feats)[idx_sort[::-1]]
-                values_sorted = np.array(summed_values)[idx_sort[::-1]]
-                
-                # For plotting
-                # selected_val = []
-                # ordered_features = []
-                # for id in range(len(unique_feats)):
-                     
-                #     if unique_feats[id] in selected_cols:
-                #         ordered_features.append(unique_feats[id])
-                #         selected_val.append(summed_values[id])
-
-                # print(f'Game: {game_type} - test: {t}')
-                # print(ordered_features)
-                # print(selected_val)
-
-                feature_names = [a + ": " + str(b) for a,b in zip(columns_sorted, values_sorted)]
-                print(f'Game: {game_type} - test: {t}')
-                print(feature_names[:15])
-
-
-            
-
-    # Get performance metrics
+    # # Get performance metrics
     performance_metrics = authenticator.get_performance_summary()
 
-    # Show average performance by model type
+    # # Show average performance by model type
     model_performance = performance_metrics.groupby(['Game_Type', 'Model_Type', 'Test_set']).mean().reset_index()
     print("Average model performance across all users:")
     display(model_performance[['Game_Type', 'Model_Type', 'Test_set', 'Accuracy', 'Precision', 'Recall', 'F1', 'AUC']])
+
+    if SHAP:
+        if SHAP_ALL:
+            game_values, columns = authenticator.perform_shap(model_name='ET', filename=filename)
+            shap_dict = {}
+            shap_dict['values'] = game_values
+            shap_dict['columns'] = columns
+            save_object(shap_dict, shap_filename)
+        elif SHAP_USER_BEAT:
+            game_type_user = 'beat_saber'
+            game_values, columns = authenticator.perform_shap_user(model_name='ET', filename=filename, user=USER, game=game_type_user)
+            shap_dict = {}
+            shap_dict['values'] = game_values
+            shap_dict['columns'] = columns
+        elif SHAP_USER_FORKLIFT:
+            game_type_user = 'forklift_simulator'
+            game_values, columns = authenticator.perform_shap_user(model_name='ET', filename=filename, user=USER, game=game_type_user)
+            shap_dict = {}
+            shap_dict['values'] = game_values
+            shap_dict['columns'] = columns
+        else:
+            with open(shap_filename, 'rb') as file:
+                shap_dict = pickle.load(file)
+
+        feats = []
+        columns = list(shap_dict['columns'])
+        game_values = shap_dict['values']
+
+        for col in columns:
+            feat = '_'.join(col.split('_')[:-1])
+            feats.append(feat)
+
+        unique_feats = list(set(feats)) # sorting is necessary to have always the same order
+        unique_feats.sort()
+
+        if SHAP_USER_BEAT or SHAP_USER_FORKLIFT:
+            game_types = [game_type_user]
+        else:
+            game_types = ['beat_saber', 'forklift_simulator']
+        
+        for game_type in game_types:
+                for t in range(2):
+                    values = game_values[game_type][t]
+                    
+                    summed_values = [] #list of shap values comulated per feature type, following the order in unique_feats
+                    for feat in unique_feats:
+                        ids = []
+                        for id in range(len(columns)):
+                            if feat in columns[id]:
+                                ids.append(id)
+                        summed_values.append(np.sum(values[ids]))
+                        
+                    idx_sort = np.array(summed_values).argsort()
+                    
+                    columns_sorted = np.array(unique_feats)[idx_sort[::-1]]
+                    values_sorted = np.array(summed_values)[idx_sort[::-1]]
+                    print(f'Game: {game_type} - test: {t}')
+                    features = [a + ": " + str(b) for a,b in zip(columns_sorted, values_sorted)]
+                    print(f'Game: {game_type_user} - test: {t}')
+                    print(features[:30])
+
 
     # Implement voting
     if TRAIN_VOTING:
@@ -815,7 +840,6 @@ def main():
             results = pickle.load(file)
 
     authenticator.visualize_voting_results(results)
-
     
 
 if __name__ == '__main__':
